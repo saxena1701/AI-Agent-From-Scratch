@@ -1,0 +1,6 @@
+# Minimal dependencies
+openai
+numpy
+pytest
+anthropic
+python-dotenv
