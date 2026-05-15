@@ -7,18 +7,27 @@ load_dotenv()
 class Agent:
     conversation_history = []
     def __init__(self):
+        
         self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        with open('src/prompt/system_prompt.md', 'r') as f:
+            self.system_prompt = f.read()
 
     def ask_question(self, question):
         self.conversation_history.append({"role": "user", "content": question})
-        message = self.client.messages.create(
+        with self.client.messages.stream(
             model="claude-opus-4-7",
             max_tokens=1000,
+            system=self.system_prompt,
             messages=self.conversation_history
-        )
-        agent_response = message.content[0].text
-        self.conversation_history.append({"role": "assistant", "content": agent_response})   
-        return agent_response
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+            print()
+            message = stream.get_final_message()
+
+        self.conversation_history.append({"role": "assistant", "content": message.content[0].text})
+        return message.content[0].text
+
 
 
 agent = Agent()
@@ -29,7 +38,6 @@ while(1):
         print("Exiting the agent. Goodbye!")
         break
     response = agent.ask_question(user_input)
-    print("Agent's response:", response)
 
 
 
