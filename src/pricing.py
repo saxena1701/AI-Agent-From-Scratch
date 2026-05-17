@@ -2,6 +2,10 @@ PRICING = {
     "claude-sonnet-4-6": {
         "input": 0.000003,      # $3 per 1M input tokens
         "output": 0.000015,     # $15 per 1M output tokens
+    },
+    "claude-haiku-4-5": {
+        "input": 0.000002,      # $2 per 1M input tokens
+        "output": 0.000010,     # $10 per 1M output tokens
     }
 }
 
