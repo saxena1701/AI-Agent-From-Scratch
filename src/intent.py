@@ -32,6 +32,8 @@ class IntentClassifierAgent:
         try:
             cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", response_text.strip())
             result = json.loads(cleaned)
+            if not isinstance(result, list):
+                result = [result]
         except json.JSONDecodeError:
             result = {"intent": "off_topic", "reasoning": "Failed to parse response"}
         
