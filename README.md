@@ -1,4 +1,4 @@
-# AI Agent From Scratch
+# From Zero to Agent: An Iterative Build
 
 A ground-up implementation of a production-style AI agent, built iteratively to understand the core mechanics behind agentic systems. The agent is scoped as a customer support assistant for an e-commerce platform (MarketSphere), backed by a real SQLite database.
 
@@ -8,7 +8,7 @@ A ground-up implementation of a production-style AI agent, built iteratively to 
 
 - [Overview](#overview)
 - [Project Structure](#project-structure)
-- [Features](#features)
+- [Build Steps](#build-steps)
 - [Setup](#setup)
 - [How It Works](#how-it-works)
 - [Models Used](#models-used)
@@ -45,7 +45,7 @@ AI-Agent-From-Scratch/
 
 ---
 
-## Features
+## Build Steps
 
 ### 1. Claude API Client + Conversation Loop
 The `Agent` class wraps the Anthropic SDK and maintains a `conversation_history` list that grows with each turn. Every user message and assistant response is appended, giving the agent full context across the session. The loop runs until the user types `exit` or `quit`.
