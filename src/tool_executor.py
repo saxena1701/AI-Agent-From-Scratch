@@ -1,4 +1,8 @@
+import os
 from backend import MarketSphereBackend
+from rag_core import retrieve
+
+RAG_DB_URL = os.getenv("RAG_DB_URL")
 
 def execute_tool(name: str, args: dict, backend: MarketSphereBackend) -> dict:
     if name == "lookup_order":
@@ -19,6 +23,14 @@ def execute_tool(name: str, args: dict, backend: MarketSphereBackend) -> dict:
             return {"results": matches} if matches else {"error": f"No products found matching {args['product_name']}"}
         else:
             return {"error": "lookup_product requires product_id or product_name"}
+
+    elif name == "retrieve":
+        results = retrieve(
+            args["query"],
+            db_url=RAG_DB_URL,
+            top_k=args.get("top_k", 5)
+        )
+        return {"results": results} if results else {"error": "No relevant results found."}
 
     else:
         return {"error": f"Unknown tool: {name}"}

@@ -47,4 +47,25 @@ SEARCH_PRODUCTS_TOOL = {
     },
 }
 
-TOOLS = [LOOKUP_ORDER_TOOL, LOOKUP_PRODUCT_TOOL, SEARCH_PRODUCTS_TOOL]
+
+
+RETRIEVE_TOOL = {
+    "name": "retrieve",
+    "description": "Perform a semantic search over the knowledge base to find relevant information. Use this when the customer asks something that may be answered by documentation, FAQs, or product guides.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The question or topic to search for in the knowledge base.",
+            },
+            "top_k": {
+                "type": "integer",
+                "description": "Number of results to return. Defaults to 5.",
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+TOOLS = [LOOKUP_ORDER_TOOL, LOOKUP_PRODUCT_TOOL, SEARCH_PRODUCTS_TOOL, RETRIEVE_TOOL]
