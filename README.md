@@ -86,7 +86,7 @@ Each classification includes a `confidence` score and a `reasoning` field. Outpu
 The classifier also gates which tools are passed to the main agent — only the subset relevant to the detected intent is included, keeping the token window lean and reducing per-call cost.
 
 ### 7. Tools, Tool Dispatcher & Agent-Tool Execution Loop
-The agent has access to three tools defined in `tools.py` using Anthropic's tool-use schema:
+The agent has access to structured tools defined in `tools.py` using Anthropic's tool-use schema:
 
 | Tool | Purpose |
 |---|---|
@@ -99,6 +99,16 @@ The main loop checks `response.stop_reason` after each turn:
 - **`end_turn`** — the agent has everything it needs and is ready to respond to the user.
 
 `tool_executor.py` routes each tool call to the appropriate `MarketSphereBackend` method, which queries a local SQLite database (`db/marketsphere.db`).
+
+### 8. Retrieval-Augmented Generation (RAG)
+A fourth tool — `retrieve` — extends the agent beyond structured database lookups into unstructured knowledge. It performs a semantic search over a vector knowledge base (via `rag_core`) containing product guides, policies, and FAQs.
+
+When the agent calls `retrieve`, `tool_executor.py`:
+1. Calls `rag_core.retrieve(query, db_url, top_k)` to fetch the most relevant document chunks
+2. Prints the retrieved chunks to the terminal with their chunk IDs before the agent responds
+3. Returns the chunks as a `tool_result` so the agent can cite them inline
+
+The system prompt instructs the agent to cite retrieved chunks inline as `[ch_XXXX]` after each supported sentence, and to explicitly acknowledge when retrieval doesn't contain a clear answer rather than guessing. This eliminates confabulation on policy and documentation questions.
 
 ---
 
@@ -115,13 +125,27 @@ source agentEnv/bin/activate
 pip install -r requirements.txt
 ```
 
-**3. Add your API key:**
+**3. Install `rag_core` as a local editable package:**
+
+`rag_core` is a separate project that provides the vector retrieval backend. Clone it and install it into the same virtual environment:
+
+```bash
+git clone https://github.com/saxena1701/AI-Agent-From-Scratch <path/to/rag_core>
+pip install -e <path/to/rag_core>
+```
+
+Then set the database URL in your `.env`:
+```bash
+RAG_DB_URL=sqlite:///<path/to/rag_core>/rag.db
+```
+
+**5. Add your API key:**
 ```bash
 # Create a .env file in the project root
 ANTHROPIC_API_KEY=your_key_here
 ```
 
-**4. Run the agent:**
+**6. Run the agent:**
 ```bash
 python src/agent.py
 ```
