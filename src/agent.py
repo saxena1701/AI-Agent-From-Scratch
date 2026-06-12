@@ -65,8 +65,7 @@ while True:
         break
 
     response = agent.ask_question(user_input, tools=TOOLS)
-    print(response)
-    while response.stop_reason == "tool_use":  # Fix 1: now checking the actual message
+    while response.stop_reason == "tool_use":
         for block in response.content:
             if block.type == "tool_use":
                 result = execute_tool(block.name, block.input, backend)

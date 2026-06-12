@@ -25,12 +25,24 @@ def execute_tool(name: str, args: dict, backend: MarketSphereBackend) -> dict:
             return {"error": "lookup_product requires product_id or product_name"}
 
     elif name == "retrieve":
-        results = retrieve(
+        raw = retrieve(
             args["query"],
             db_url=RAG_DB_URL,
             top_k=args.get("top_k", 5)
         )
-        return {"results": results} if results else {"error": "No relevant results found."}
+        chunks = raw.get("results", []) if isinstance(raw, dict) else (raw or [])
+        if chunks:
+            print(f"\n[Retrieved {len(chunks)} chunk(s)]")
+            for i, chunk in enumerate(chunks):
+                if isinstance(chunk, dict):
+                    chunk_id = chunk.get("chunk_id", f"chunk_{i}")
+                    text = chunk.get("text", chunk.get("content", str(chunk)))
+                else:
+                    chunk_id = f"chunk_{i}"
+                    text = str(chunk)
+                print(f"  [{chunk_id}]")
+            print()
+        return {"results": chunks} if chunks else {"error": "No relevant results found."}
 
     else:
         return {"error": f"Unknown tool: {name}"}
