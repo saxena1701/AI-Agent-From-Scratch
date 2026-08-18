@@ -1,8 +1,10 @@
 import os
 from backend import MarketSphereBackend
-from rag_core import retrieve
+from query_rewriter import rewrite
+from rag_core import make_multi_query_retriever
 
 RAG_DB_URL = os.getenv("RAG_DB_URL")
+_multi_query_retrieve = make_multi_query_retriever(rewrite)
 
 def execute_tool(name: str, args: dict, backend: MarketSphereBackend) -> dict:
     if name == "lookup_order":
@@ -25,7 +27,7 @@ def execute_tool(name: str, args: dict, backend: MarketSphereBackend) -> dict:
             return {"error": "lookup_product requires product_id or product_name"}
 
     elif name == "retrieve":
-        raw = retrieve(
+        raw = _multi_query_retrieve(
             args["query"],
             db_url=RAG_DB_URL,
             top_k=args.get("top_k", 5)

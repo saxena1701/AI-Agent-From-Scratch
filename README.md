@@ -30,12 +30,14 @@ AI-Agent-From-Scratch/
 │   ├── intent.py             # Intent classifier agent (separate Claude client)
 │   ├── tools.py              # Tool definitions (Anthropic tool-use schema)
 │   ├── tool_executor.py      # Tool dispatcher — routes agent requests to backend
+│   ├── query_rewriter.py     # Query rewriter (multi-query fan-out, separate Claude client)
 │   ├── backend.py            # MarketSphere SQLite backend (orders, products)
 │   ├── pricing.py            # Per-turn cost calculator
 │   ├── logger.py             # Session logger (JSON output)
 │   └── prompt/
 │       ├── system_prompt.md          # Main agent system prompt
-│       └── intent_classifier_prompt.md  # Intent classifier system prompt
+│       ├── intent_classifier_prompt.md  # Intent classifier system prompt
+│       └── query_rewriter_prompt.md     # Query rewriter system prompt
 ├── db/
 │   └── marketsphere.db       # SQLite mock database
 ├── logs/                     # Per-session JSONL cost/usage logs
@@ -110,6 +112,12 @@ When the agent calls `retrieve`, `tool_executor.py`:
 
 The system prompt instructs the agent to cite retrieved chunks inline as `[ch_XXXX]` after each supported sentence, and to explicitly acknowledge when retrieval doesn't contain a clear answer rather than guessing. This eliminates confabulation on policy and documentation questions.
 
+### 9. Query Rewriter (Multi-Query Fan-Out)
+
+Before retrieval, `src/query_rewriter.py` fans a single query out into several diverse reformulations via a single Claude Haiku 4.5 call — paraphrases, decompositions of multi-part questions, and vocabulary/synonym variants — using structured outputs (`output_config.format`) so the response is a guaranteed JSON array of strings, no text parsing required.
+
+This is a standalone step: `rewrite(query) -> list[str]` returns only the rewrites (never the original) and holds no retrieval logic or DB access. `tool_executor.py` wires it into the `retrieve` tool via `rag_core.make_multi_query_retriever(rewrite)`, which prepends the original query, retrieves and reranks each query independently, normalizes each query's scores to `[0, 1]`, and merges by `chunk_id` (keeping the max score and recording every surfacing query as provenance). A chunk that multiple rewrites converge on ranks higher than one only the original query happened to find.
+
 ---
 
 ## Setup
@@ -158,3 +166,4 @@ python src/agent.py
 |---|---|---|
 | Main agent | `claude-sonnet-4-6` | Strong reasoning and tool-use |
 | Intent classifier | `claude-haiku-4-5` | Fast and cheap for classification tasks |
+| Query rewriter | `claude-haiku-4-5` | Cheap, fast, high-volume structured task |
