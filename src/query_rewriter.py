@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from logger import SessionLogger
 from pricing import calculate_cost
+from tracer import get_tracer
 
 load_dotenv()
 
@@ -41,19 +42,24 @@ class QueryRewriter:
         self.session_start = datetime.now()
         self.logger = SessionLogger(self.session_start)
         self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        self.tracer = get_tracer()
         with open('src/prompt/query_rewriter_prompt.md', 'r') as f:
             self.system_prompt = f.read().replace("{n}", str(self.n))
 
     def rewrite(self, query: str) -> List[str]:
         start_time = time.time()
 
-        message = self.client.messages.create(
-            model=MODEL,
-            max_tokens=1000,
-            system=self.system_prompt,
-            messages=[{"role": "user", "content": query}],
-            output_config={"format": {"type": "json_schema", "schema": REWRITE_SCHEMA}},
-        )
+        with self.tracer.span("llm_call", "query-rewriter") as span:
+            message = self.client.messages.create(
+                model=MODEL,
+                max_tokens=1000,
+                system=self.system_prompt,
+                messages=[{"role": "user", "content": query}],
+                output_config={"format": {"type": "json_schema", "schema": REWRITE_SCHEMA}},
+            )
+            text = next(block.text for block in message.content if block.type == "text")
+            rewrites = json.loads(text)["queries"]
+            span.set_result({"rewrites": rewrites})
 
         latency = time.time() - start_time
         input_tokens = message.usage.input_tokens
@@ -63,8 +69,7 @@ class QueryRewriter:
         self.logger.log_turn(MODEL, input_tokens, output_tokens, turn_cost, latency)
         self.logger.print_stats(input_tokens, output_tokens, turn_cost, self.session_cost)
 
-        text = next(block.text for block in message.content if block.type == "text")
-        return json.loads(text)["queries"]
+        return rewrites
 
 
 _default_rewriter = None

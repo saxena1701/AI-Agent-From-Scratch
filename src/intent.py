@@ -10,6 +10,7 @@ import json
 import time
 from pydantic import BaseModel, Field, ValidationError
 import re
+from tracer import get_tracer
 load_dotenv()
 
 
@@ -33,6 +34,7 @@ class IntentClassifierAgent:
         self.session_start = datetime.now()
         self.logger = SessionLogger(self.session_start)
         self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        self.tracer = get_tracer()
         with open('src/prompt/intent_classifier_prompt.md', 'r') as f:
             self.system_prompt = f.read()
 
@@ -59,30 +61,36 @@ class IntentClassifierAgent:
         response_text = ""
         results: List[IntentClassification] = []
 
-        for attempt in range(2):
-            prompt = question
-            if parser_error:
-                prompt += (
-                    "\n\nCorrection hint: The previous response failed validation with error: "
-                    f"{parser_error}. Please return only valid JSON that matches the intent schema."
-                )
+        with self.tracer.span("llm_call", "intent-classifier") as span:
+            for attempt in range(2):
+                prompt = question
+                if parser_error:
+                    prompt += (
+                        "\n\nCorrection hint: The previous response failed validation with error: "
+                        f"{parser_error}. Please return only valid JSON that matches the intent schema."
+                    )
 
-            with self.client.messages.stream(
-                model="claude-haiku-4-5",
-                max_tokens=1000,
-                system=self.system_prompt,
-                messages=[{"role": "user", "content": prompt}]
-            ) as stream:
-                message = stream.get_final_message()
+                with self.client.messages.stream(
+                    model="claude-haiku-4-5",
+                    max_tokens=1000,
+                    system=self.system_prompt,
+                    messages=[{"role": "user", "content": prompt}]
+                ) as stream:
+                    message = stream.get_final_message()
 
-            response_text = message.content[0].text
-            try:
-                results = self._parse_response(response_text)
-                break
-            except (json.JSONDecodeError, ValidationError) as exc:
-                parser_error = str(exc)
-                if attempt == 1:
-                    results = self._safe_fallback()
+                response_text = message.content[0].text
+                try:
+                    results = self._parse_response(response_text)
+                    break
+                except (json.JSONDecodeError, ValidationError) as exc:
+                    parser_error = str(exc)
+                    if attempt == 1:
+                        results = self._safe_fallback()
+
+            span.set_result([
+                {"intent": r.intent, "confidence": r.confidence, "reasoning": r.reasoning}
+                for r in results
+            ])
 
         latency = time.time() - start_time
         input_tokens = message.usage.input_tokens

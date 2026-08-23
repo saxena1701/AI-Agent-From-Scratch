@@ -11,6 +11,7 @@ from intent import IntentClassifierAgent
 from tool_executor import execute_tool
 from tools import TOOLS
 from backend import MarketSphereBackend
+from tracer import get_tracer
 load_dotenv()
 
 class Agent:
@@ -21,6 +22,7 @@ class Agent:
         self.logger = SessionLogger(self.session_start)
         self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         self.classifier = IntentClassifierAgent()
+        self.tracer = get_tracer()
         with open('src/prompt/system_prompt.md', 'r') as f:
             self.system_prompt = f.read()
 
@@ -30,17 +32,23 @@ class Agent:
             self.conversation_history.append({"role": "user", "content": question})
             self.classifier.classify_intent(question)
 
-        with self.client.messages.stream(
-            model="claude-sonnet-4-6",
-            max_tokens=1000,
-            system=self.system_prompt,
-            messages=self.conversation_history,
-            tools=tools
-        ) as stream:
-            for text in stream.text_stream:
-                print(text, end="", flush=True)
-            print()
-            message = stream.get_final_message()
+        with self.tracer.span("llm_call", "agent-main") as span:
+            with self.client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=1000,
+                system=self.system_prompt,
+                messages=self.conversation_history,
+                tools=tools
+            ) as stream:
+                for text in stream.text_stream:
+                    print(text, end="", flush=True)
+                print()
+                message = stream.get_final_message()
+            span.set_result({
+                "stop_reason": message.stop_reason,
+                "input_tokens": message.usage.input_tokens,
+                "output_tokens": message.usage.output_tokens,
+            })
 
         latency = time.time() - start_time
         input_tokens = message.usage.input_tokens
@@ -57,6 +65,7 @@ class Agent:
 
 agent = Agent()
 backend = MarketSphereBackend('db/marketsphere.db')
+tracer = agent.tracer
 
 while True:
     user_input = input("Enter your prompt: ")
@@ -64,11 +73,14 @@ while True:
         print("Exiting the agent. Goodbye!")
         break
 
+    tracer.begin_turn(user_input)
     response = agent.ask_question(user_input, tools=TOOLS)
     while response.stop_reason == "tool_use":
         for block in response.content:
             if block.type == "tool_use":
-                result = execute_tool(block.name, block.input, backend)
+                with tracer.span("tool_call", block.name, args=block.input) as span:
+                    result = execute_tool(block.name, block.input, backend)
+                    span.set_result(result)
                 agent.conversation_history.append({
                     "role": "user",
                     "content": [{
@@ -79,4 +91,5 @@ while True:
                 })
 
         response = agent.ask_question(tools=TOOLS)
+    tracer.end_turn()
 
