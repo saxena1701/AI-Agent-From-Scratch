@@ -10,12 +10,14 @@ _tracer = get_tracer()
 
 def execute_tool(name: str, args: dict, backend: MarketSphereBackend) -> dict:
     if name == "lookup_order":
-        result = backend.get_order(args["order_id"])
+        if not backend.session_email:
+            return {"error": "No customer session established."}
+        result = backend.get_order(args["order_id"], backend.session_email)
         return result or {"error": f"No order found with ID {args['order_id']}"}
 
-    elif name == "get_product_details":
-        result = backend.get_product(args["product_id"])
-        return result or {"error": f"No product found with ID {args['product_id']}"}
+    elif name == "search_products":
+        matches = backend.search_products(args["query"])
+        return {"results": matches} if matches else {"error": f"No products found matching {args['query']}"}
 
     elif name == "lookup_product":
         # if you want to support either product_id or product_name

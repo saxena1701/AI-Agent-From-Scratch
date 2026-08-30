@@ -4,8 +4,8 @@ PRICING = {
         "output": 0.000015,     # $15 per 1M output tokens
     },
     "claude-haiku-4-5": {
-        "input": 0.000002,      # $2 per 1M input tokens
-        "output": 0.000010,     # $10 per 1M output tokens
+        "input": 0.000001,      # $1 per 1M input tokens
+        "output": 0.000005,     # $5 per 1M output tokens
     }
 }
 

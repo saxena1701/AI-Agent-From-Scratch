@@ -63,9 +63,22 @@ class Agent:
         return message  # Fix 1: return the full message object
 
 
+MAX_TOOL_ITERATIONS = 10
+
 agent = Agent()
 backend = MarketSphereBackend('db/marketsphere.db')
 tracer = agent.tracer
+
+while True:
+    email = input("Please enter your account email to begin (or 'exit'): ").strip().lower()
+    if email in ("exit", "quit"):
+        raise SystemExit("Goodbye!")
+    user = backend.get_user(email)
+    if user:
+        backend.session_email = email
+        print(f"Welcome back, {user['name']}!\n")
+        break
+    print("No account found for that email. Please try again.\n")
 
 while True:
     user_input = input("Enter your prompt: ")
@@ -74,22 +87,49 @@ while True:
         break
 
     tracer.begin_turn(user_input)
-    response = agent.ask_question(user_input, tools=TOOLS)
-    while response.stop_reason == "tool_use":
-        for block in response.content:
-            if block.type == "tool_use":
-                with tracer.span("tool_call", block.name, args=block.input) as span:
-                    result = execute_tool(block.name, block.input, backend)
-                    span.set_result(result)
+    try:
+        response = agent.ask_question(user_input, tools=TOOLS)
+        iterations = 0
+        while response.stop_reason == "tool_use":
+            if iterations >= MAX_TOOL_ITERATIONS:
+                # history ends with an unanswered assistant tool_use block;
+                # answer every block with an error so history stays valid for
+                # the next user turn, then stop WITHOUT re-calling the model.
                 agent.conversation_history.append({
                     "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(result)
-                    }]
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps({"error": "Tool iteration limit reached."}),
+                            "is_error": True
+                        }
+                        for block in response.content if block.type == "tool_use"
+                    ]
                 })
+                print(f"\n[!] Stopped after {MAX_TOOL_ITERATIONS} tool iterations.")
+                break
+            iterations += 1
 
-        response = agent.ask_question(tools=TOOLS)
-    tracer.end_turn()
+            for block in response.content:
+                if block.type == "tool_use":
+                    with tracer.span("tool_call", block.name, args=block.input) as span:
+                        result = execute_tool(block.name, block.input, backend)
+                        span.set_result(result)
+                    agent.conversation_history.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(result)
+                        }]
+                    })
+
+            response = agent.ask_question(tools=TOOLS)
+    except anthropic.APIError as e:
+        print(f"\n[!] API error, turn aborted: {e}")
+    except Exception as e:
+        print(f"\n[!] Turn failed: {type(e).__name__}: {e}")
+    finally:
+        tracer.end_turn()
 
