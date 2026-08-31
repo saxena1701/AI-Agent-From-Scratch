@@ -43,6 +43,7 @@ Review code changes with a structured lens on security, performance, correctness
 - Generate a plan, review it, then build — do not skip straight to code.
 - Test AI output manually, especially for data transformations and API parsing.
 - AI can produce wrong results — always verify before shipping.
+- Trace every non-trivial computed value — the return of *any* function, method, or class call, not just API/model calls — from creation to its actual consumer. A plain helper, validator, or parser whose result is dropped, reassigned and never read, or only printed/logged is the same defect as an unused model-call result, just without the price tag attached. AI-generated code reliably produces steps that run cleanly but whose output goes nowhere; that's not a crash, so it hides from a bugs-only read. If a doc (README/CLAUDE.md) or the function's own name/docstring claims its output drives behavior, verify the call site actually branches on it before taking the claim at face value.
 
 **Process**
 - Start by summarizing what the code does before jumping to suggestions.
@@ -61,8 +62,9 @@ Review code changes with a structured lens on security, performance, correctness
 2. If no specific file or URL is provided, ask what to review.
 3. Start with a summary of what the code does and its context.
 4. Apply the Stanford best practices checklist (above) in addition to standard review dimensions.
-5. Call out anything that would page someone at 3am, and say how it gets rolled back.
-6. **Write the review to a versioned file under `thoughts/shared/reviews/`** — see [Review Artifacts](#review-artifacts) below. Every review gets a file, no exceptions; then summarize the findings in the terminal and give the path.
+5. For each new or changed non-trivial call (especially a model/API/classifier call), trace its return value forward to confirm something actually consumes it — a branch, a prompt, a stored decision. Flag any whose output only reaches a `print`/log/discard as a **computed-but-unused output** finding, even though nothing errors.
+6. Call out anything that would page someone at 3am, and say how it gets rolled back.
+7. **Write the review to a versioned file under `thoughts/shared/reviews/`** — see [Review Artifacts](#review-artifacts) below. Every review gets a file, no exceptions; then summarize the findings in the terminal and give the path.
 
 
 ## Review Artifacts
@@ -115,6 +117,7 @@ The body is the Output template below, verbatim, with a repeated header block (D
 │  ✓ Security audit (OWASP top 10, injection, auth, Stanford secrets policy)  │
 │  ✓ Performance review (N+1, memory leaks, complexity, Docker layers)        │
 │  ✓ Correctness (edge cases, error handling, race conditions)                │
+│  ✓ Usage tracing (a call's output must reach a real consumer, not a log)    │
 │  ✓ Production readiness (timeouts, retries, limits, rollback path)          │
 │  ✓ Observability (structured logs, metrics, alerts, no PII in logs)         │
 │  ✓ Style (naming, structure, readability, matches project conventions)      │
@@ -160,6 +163,7 @@ The body is the Output template below, verbatim, with a repeated header block (D
 - Off-by-one errors
 - Type safety
 - **AI-generated code is manually verified**
+- **Computed-but-unused output** — for each new or changed call, of *any* kind (a plain function, a method, a classifier, a model/API call), confirm its return value is actually consumed by a branch, prompt, or downstream decision, not just discarded, reassigned-and-never-read, printed, or logged. A call that runs successfully every time but changes nothing is a usage bug, not a passing test — most costly (and most common) on paid API/model calls, but the same defect on a plain helper. Cross-check against any doc (README/CLAUDE.md) or the function's own name that claims the output drives behavior.
 
 ### Production Readiness
 - **Timeouts on every external call**; retries backed off, jittered, idempotent
@@ -209,6 +213,7 @@ This template is the body of the review file (written under `thoughts/shared/rev
 - [ ] Sensitive files isolated/excluded
 - [ ] AI-generated code manually verified
 - [ ] Matches project style/conventions
+- [ ] Every non-trivial computed value (esp. model/API call results) is traced to a real consumer, not just logged/printed
 
 ### Production Hardening Checklist
 - [ ] Timeouts set on all network/database calls

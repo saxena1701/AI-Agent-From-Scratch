@@ -7,14 +7,21 @@ repository: AI-Agent-From-Scratch
 target: "main branch (full source tree, excluding agentEnv/)"
 version: 1
 supersedes: null
-verdict: Request Changes
+verdict: Request Changes (superseded — all 4 criticals fixed, see below)
 critical_count: 4
+critical_fixed_count: 4
 suggestion_count: 18
 tags: [code-review, security, correctness, production-readiness, pricing, tool-executor, agent-loop]
 status: complete
 last_updated: 2026-08-30
 last_updated_by: Claude
 ---
+
+> **Update 2026-08-30**: All 4 critical issues below have been fixed per
+> `thoughts/shared/plans/2026-08-30-critical-review-fixes.md` (Phases 1–4,
+> all automated success criteria passing, 14/14 regression tests green).
+> Suggestions #5–#22 remain out of scope / unaddressed. See the
+> "Resolution" column added to the Critical Issues table.
 
 # Code Review: `main` branch — AI-Agent-From-Scratch
 
@@ -37,12 +44,12 @@ The architecture is clean and the pedagogical goal is well served, but there are
 
 ## Critical Issues
 
-| # | File | Line | Issue | Severity |
-|---|------|------|-------|----------|
-| 1 | `src/tool_executor.py` | 11–56 | No handler for `search_products`, but `tools.py:35` declares it and `system_prompt.md` explicitly tells the model to use it ("Use this to find candidates, then follow up with lookup_product"). Every call returns `{"error": "Unknown tool: search_products"}`. Conversely `get_product_details` (line 16) is dead — no tool declares it. | 🔴 Critical |
-| 2 | `src/tool_executor.py` | 12–14 | `lookup_order` returns the full row — including `customer_email` — for any order ID, with no identity verification. IDs are sequential (`ORD-100001`…`ORD-100008`), so "what's the status of ORD-100002?" hands the user another customer's PII. Classic IDOR. | 🔴 Critical |
-| 3 | `src/pricing.py` | 6–9 | Haiku 4.5 is priced at $2/$10 per MTok; the actual rate is **$1/$5**. Verified against the current pricing table (Sonnet 4.6 at $3/$15 is correct). Two of every three model calls are Haiku, so reported session cost is inflated — and the 11 committed JSONL logs are wrong too (`cost: 0.001544` for 272in/100out confirms the bad rate). | 🔴 Critical |
-| 4 | `src/agent.py` | 78–93 | `while response.stop_reason == "tool_use"` has no iteration cap, no `try/except`, and `conversation_history` is never trimmed. Combined with #1 — the model is told to call a tool that always errors — this loops, re-sending a growing history each pass, spending real money until you `kill` it. Any `APIError` mid-turn also takes the whole REPL down. | 🔴 Critical |
+| # | File | Line | Issue | Severity | Resolution |
+|---|------|------|-------|----------|------------|
+| 1 | `src/tool_executor.py` | 11–56 | No handler for `search_products`, but `tools.py:35` declares it and `system_prompt.md` explicitly tells the model to use it ("Use this to find candidates, then follow up with lookup_product"). Every call returns `{"error": "Unknown tool: search_products"}`. Conversely `get_product_details` (line 16) is dead — no tool declares it. | 🔴 Critical | ✅ **Fixed** — `search_products` handler added, dead `get_product_details` branch removed. Regression: `test_search_products_tool_dispatches`, `test_every_declared_tool_has_handler`. |
+| 2 | `src/tool_executor.py` | 12–14 | `lookup_order` returns the full row — including `customer_email` — for any order ID, with no identity verification. IDs are sequential (`ORD-100001`…`ORD-100008`), so "what's the status of ORD-100002?" hands the user another customer's PII. Classic IDOR. | 🔴 Critical | ✅ **Fixed** — new `users` table (`db/migrate_add_users.py`), session identified by email at REPL start, `get_order(order_id, customer_email)` scopes the query and strips `customer_email` from the result; wrong-owner and nonexistent orders are indistinguishable to the caller. Regression: `test_get_order_correct_owner`, `test_get_order_wrong_owner_is_none`, `test_get_order_missing_is_none`, `test_wrong_owner_indistinguishable_from_missing`, `test_lookup_order_no_session_email`. |
+| 3 | `src/pricing.py` | 6–9 | Haiku 4.5 is priced at $2/$10 per MTok; the actual rate is **$1/$5**. Verified against the current pricing table (Sonnet 4.6 at $3/$15 is correct). Two of every three model calls are Haiku, so reported session cost is inflated — and the 11 committed JSONL logs are wrong too (`cost: 0.001544` for 272in/100out confirms the bad rate). | 🔴 Critical | ✅ **Fixed** — rate table corrected to $1/$5. Historical committed `logs/*.jsonl` intentionally left as-is (not rewritten). Regression: `test_haiku_pricing`, `test_sonnet_pricing`. |
+| 4 | `src/agent.py` | 78–93 | `while response.stop_reason == "tool_use"` has no iteration cap, no `try/except`, and `conversation_history` is never trimmed. Combined with #1 — the model is told to call a tool that always errors — this loops, re-sending a growing history each pass, spending real money until you `kill` it. Any `APIError` mid-turn also takes the whole REPL down. | 🔴 Critical | ✅ **Fixed** — `MAX_TOOL_ITERATIONS = 10` cap (repairs history with an error `tool_result` on limit so the next turn stays valid), `try/except anthropic.APIError` + generic `Exception` around the turn, `tracer.end_turn()` moved to `finally`. History trimming explicitly out of scope (bounds spend per turn, not context growth). |
 
 ## Suggestions
 
@@ -93,6 +100,8 @@ Nothing here is deployed, so the realistic 3am scenario is **#4 + #1 together**:
 
 **Fix order**: #1 (add the handler — one branch in `tool_executor.py`), then #4 (cap iterations at ~10, wrap the turn in `try/except`), then #3 (one-line price correction), then #2 (require an email or order-lookup token before returning `customer_email`).
 
+**Status**: All four fixed and regression-tested per `thoughts/shared/plans/2026-08-30-critical-review-fixes.md` — Phase 1 (#1, #3), Phase 2 (#4), Phase 3 (#2), Phase 4 (14 automated regression tests, including negative tests proving each fix would be caught if reverted).
+
 **Rollback**: local CLI, no deploy — `git revert` per commit. Watch `db/marketsphere.db`: it's a committed binary, so a revert changes data with no reviewable diff.
 
 ## What Looks Good
@@ -107,3 +116,5 @@ Nothing here is deployed, so the realistic 3am scenario is **#4 + #1 together**:
 ## Verdict
 
 **Request Changes** — #1 and #4 are user-visible breakage on the happy path; #2 and #3 are correctness issues worth fixing before this is demoed to anyone.
+
+**Resolved as of 2026-08-30**: all 4 criticals fixed and covered by regression tests (see `thoughts/shared/plans/2026-08-30-critical-review-fixes.md`). Suggestions #5–#22 remain open and out of scope for that plan.
