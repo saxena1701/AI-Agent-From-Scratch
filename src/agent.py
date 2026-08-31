@@ -10,6 +10,7 @@ import time
 from intent import IntentClassifierAgent
 from tool_executor import execute_tool
 from tools import TOOLS
+from tool_gating import gate_tools
 from backend import MarketSphereBackend
 from tracer import get_tracer
 load_dotenv()
@@ -23,14 +24,18 @@ class Agent:
         self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         self.classifier = IntentClassifierAgent()
         self.tracer = get_tracer()
+        self.current_tools = TOOLS  # default until first classification of a turn
         with open('src/prompt/system_prompt.md', 'r') as f:
             self.system_prompt = f.read()
 
-    def ask_question(self, question=None, tools=None):
+    def ask_question(self, question=None):
         start_time = time.time()
         if question is not None:
             self.conversation_history.append({"role": "user", "content": question})
-            self.classifier.classify_intent(question)
+            classifications = self.classifier.classify_intent(question)
+            self.current_tools = gate_tools(classifications)
+            print(f"[Tool Gating] tools enabled this turn: "
+                  f"{[t['name'] for t in self.current_tools] or '(none)'}")
 
         with self.tracer.span("llm_call", "agent-main") as span:
             with self.client.messages.stream(
@@ -38,7 +43,7 @@ class Agent:
                 max_tokens=1000,
                 system=self.system_prompt,
                 messages=self.conversation_history,
-                tools=tools
+                tools=self.current_tools
             ) as stream:
                 for text in stream.text_stream:
                     print(text, end="", flush=True)
@@ -88,7 +93,7 @@ while True:
 
     tracer.begin_turn(user_input)
     try:
-        response = agent.ask_question(user_input, tools=TOOLS)
+        response = agent.ask_question(user_input)
         iterations = 0
         while response.stop_reason == "tool_use":
             if iterations >= MAX_TOOL_ITERATIONS:
@@ -125,7 +130,7 @@ while True:
                         }]
                     })
 
-            response = agent.ask_question(tools=TOOLS)
+            response = agent.ask_question()
     except anthropic.APIError as e:
         print(f"\n[!] API error, turn aborted: {e}")
     except Exception as e:
