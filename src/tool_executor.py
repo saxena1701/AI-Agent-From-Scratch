@@ -54,5 +54,35 @@ def execute_tool(name: str, args: dict, backend: MarketSphereBackend) -> dict:
             print()
         return {"results": chunks} if chunks else {"error": "No relevant results found."}
 
+    elif name == "list_customer_orders":
+        if not backend.session_email:
+            return {"error": "No customer session established."}
+        orders = backend.list_orders(backend.session_email)
+        return {"results": orders} if orders else {"error": "No orders found on this account."}
+
+    elif name == "cancel_order":
+        if not backend.session_email:
+            return {"error": "No customer session established."}
+        result = backend.cancel_order(args["order_id"], backend.session_email)
+        return result if result else {"error": f"No order found with ID {args['order_id']}"}
+
+    elif name == "check_return_eligibility":
+        if not backend.session_email:
+            return {"error": "No customer session established."}
+        result = backend.check_return_eligibility(args["order_id"], backend.session_email)
+        return result if result else {"error": f"No order found with ID {args['order_id']}"}
+
+    elif name == "initiate_return":
+        if not backend.session_email:
+            return {"error": "No customer session established."}
+        result = backend.initiate_return(args["order_id"], backend.session_email, args.get("reason"))
+        return result if result else {"error": f"No order found with ID {args['order_id']}"}
+
+    elif name == "get_user_details":
+        if not backend.session_email:
+            return {"error": "No customer session established."}
+        user = backend.get_user(backend.session_email)
+        return user if user else {"error": "No account found for this session."}
+
     else:
         return {"error": f"Unknown tool: {name}"}
