@@ -51,7 +51,8 @@ def execute_tool(name: str, args: dict, backend: MarketSphereBackend) -> dict:
                 else:
                     chunk_id = f"chunk_{i}"
                     text = str(chunk)
-            print()
+            if _tracer.enabled:
+                print()
         return {"results": chunks} if chunks else {"error": "No relevant results found."}
 
     elif name == "list_customer_orders":

@@ -99,9 +99,13 @@ class IntentClassifierAgent:
         self.session_cost += turn_cost
 
         self.logger.log_turn("claude-haiku-4-5", input_tokens, output_tokens, turn_cost, latency)
-        self.logger.print_stats(input_tokens, output_tokens, turn_cost, self.session_cost)
-        print("\n[Intent Classification]")
-        for r in results:
-            print(f"  {r.intent} ({r.confidence:.0%}) — {r.reasoning}")
-        print()
+        self.logger.print_stats(
+            input_tokens, output_tokens, turn_cost, self.session_cost,
+            print_debug=self.tracer.enabled,
+        )
+        if self.tracer.enabled:
+            print("\n[Intent Classification]")
+            for r in results:
+                print(f"  {r.intent} ({r.confidence:.0%}) — {r.reasoning}")
+            print()
         return results

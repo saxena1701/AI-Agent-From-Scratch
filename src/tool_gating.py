@@ -32,22 +32,39 @@ def _is_safe_fallback(classifications: list[IntentClassification]) -> bool:
     )
 
 
+def resolve_intents(classifications: list[IntentClassification]) -> list[str]:
+    """Reduce raw classifier output to the intent list that actually drives this turn.
+
+    Single source of truth for confidence filtering and fallback selection, so
+    tool gating and model routing can never disagree about what the turn is.
+    Always returns at least one intent.
+    """
+    if _is_safe_fallback(classifications):
+        return ["general_support"]
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for c in classifications:
+        if c.confidence >= CONFIDENCE_THRESHOLD and c.intent not in seen:
+            resolved.append(c.intent)
+            seen.add(c.intent)
+
+    if resolved:
+        return resolved
+    # Nothing cleared the bar. An off_topic signal at any confidence still means
+    # "offer nothing"; otherwise fall back to the general_support bucket.
+    if "off_topic" in {c.intent for c in classifications}:
+        return ["off_topic"]
+    return ["general_support"]
+
+
 def gate_tools(classifications: list[IntentClassification]) -> list[dict]:
     """Return the tool schema subset the main agent should be offered this turn."""
-    if _is_safe_fallback(classifications):
-        return list(INTENT_TOOL_MAP["general_support"])
-
-    kept = [c for c in classifications if c.confidence >= CONFIDENCE_THRESHOLD]
-
     gated: list[dict] = []
     seen_names: set[str] = set()
-    for c in kept:
-        for tool in INTENT_TOOL_MAP.get(c.intent, []):
+    for intent in resolve_intents(classifications):
+        for tool in INTENT_TOOL_MAP.get(intent, []):
             if tool["name"] not in seen_names:
                 gated.append(tool)
                 seen_names.add(tool["name"])
-
-    if not gated and "off_topic" not in {c.intent for c in classifications}:
-        return list(INTENT_TOOL_MAP["general_support"])
-
     return gated
