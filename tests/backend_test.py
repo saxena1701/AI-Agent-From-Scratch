@@ -100,12 +100,30 @@ def test_sonnet_pricing():
 
 def test_unknown_model_pricing():
     # Input: a model name absent from the rate table
-    # Expected: TypeError today (documents current behavior; suggestion #6 —
-    #   raising a clearer error for unknown models — is not fixed here)
+    # Expected: ValueError naming the offending model — routing can introduce new
+    #   model IDs, and a NoneType subscript error gives no clue which one is missing.
     from pricing import calculate_cost
 
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError, match="claude-nonexistent-model"):
         calculate_cost("claude-nonexistent-model", 1_000_000, 1_000_000)
+
+
+def test_sonnet_5_pricing():
+    # Input: 1,000,000 input / 1,000,000 output tokens at the Sonnet 5 rate
+    # Expected: $2.00 input-only, $10.00 output-only — cheaper than sonnet-4-6's $3/$15
+    from pricing import calculate_cost
+
+    assert calculate_cost("claude-sonnet-5", 1_000_000, 0) == pytest.approx(2.0)
+    assert calculate_cost("claude-sonnet-5", 0, 1_000_000) == pytest.approx(10.0)
+
+
+def test_opus_5_pricing():
+    # Input: 1,000,000 input / 1,000,000 output tokens at the Opus 5 rate
+    # Expected: $5.00 input-only, $25.00 output-only
+    from pricing import calculate_cost
+
+    assert calculate_cost("claude-opus-5", 1_000_000, 0) == pytest.approx(5.0)
+    assert calculate_cost("claude-opus-5", 0, 1_000_000) == pytest.approx(25.0)
 
 
 # --- #2: session-scoped lookup_order / IDOR fix ---

@@ -74,8 +74,10 @@ Every API call is metered in `pricing.py`, which calculates cost from input/outp
 **Rates tracked:**
 | Model | Input | Output |
 |---|---|---|
+| claude-opus-5 | $5 / 1M tokens | $25 / 1M tokens |
+| claude-sonnet-5 | $2 / 1M tokens | $10 / 1M tokens |
 | claude-sonnet-4-6 | $3 / 1M tokens | $15 / 1M tokens |
-| claude-haiku-4-5 | $2 / 1M tokens | $10 / 1M tokens |
+| claude-haiku-4-5 | $1 / 1M tokens | $5 / 1M tokens |
 
 ### 6. Intent Classification
 Before the main agent processes a query, a lightweight `IntentClassifierAgent` (backed by `claude-haiku-4-5`) categorises the user's intent into one of five classes:
@@ -141,6 +143,21 @@ This is a standalone step: `rewrite(query) -> list[str]` returns only the rewrit
 ### 11. Tracing
 `src/tracer.py` is a lightweight console tracer (not a full observability library) that prints nested, timestamped enter/exit lines for each unit of work in a turn — e.g. the `agent-main` LLM call, a `tool_call` span, and a `rag_call` span nested inside it when `retrieve` fans out to `rag_core`. `agent.py` brackets each user turn with `begin_turn()`/`end_turn()`, and `Agent`, `IntentClassifierAgent`, `QueryRewriter`, and `tool_executor.py` each wrap their own work in `tracer.span(kind, name, **fields)`. It's a module-level singleton with global turn/depth state, intentionally single-threaded (one conversation loop), and complements — rather than replaces — the per-session JSONL cost logs written by `SessionLogger`.
 
+### 12. Intent-Based Model Routing
+`src/model_router.py` is the sibling of `tool_gating.py`: both consume the resolved intent list, one to pick the tool subset, the other to pick the model. Routing is static — a pure function of a classification, with no runtime escalation — and runs **per turn, ratcheting upward**: every user turn is routed from its own classification, and the session moves to that model only if it is a *higher* tier than the current one. A session never downgrades, and the model never changes inside a turn's tool loop (`is_higher_tier()` plus a `model_routed` flag in `Agent.ask_question()`). A turn held at the session's tier records why in its log row, e.g. `route_reason: "order_status; held by floor (return_request)"`.
+
+| Intent (of the turn) | Model | Why |
+|---|---|---|
+| `off_topic` | `claude-haiku-4-5` | No tools, no reasoning — just decline |
+| `order_status` | `claude-haiku-4-5` | One lookup, format a row; errors self-correct |
+| `product_question` | `claude-sonnet-5` | RAG synthesis across merged chunks, citation discipline |
+| `general_support` | `claude-sonnet-5` | Open-ended, and the catch-all for unclassifiable turns |
+| `return_request` | `claude-opus-5` | Policy reasoning, and the only intent whose tools mutate the DB |
+
+A multi-intent turn takes the most capable tier, mirroring how tool gating takes the union of tools; the ratchet applies that same "err toward capability" rule across turns instead of only within one. Only the main agent is routed — routing the intent classifier would be circular, and the query rewriter's work is the same difficulty every call.
+
+Every turn is also priced at the pre-routing `claude-sonnet-4-6` baseline, and `exit` prints a routing summary with one row per tier the session passed through. That baseline is an **estimate**: it reprices each turn's actual token counts, so it does not capture a different model producing a different-length answer or taking a different number of tool iterations. One `return_request` escalates the rest of the session to Opus and can turn the delta negative — the deliberate price of never downgrading, shown rather than hidden.
+
 ---
 
 ## Setup
@@ -187,6 +204,6 @@ python src/agent.py
 
 | Component | Model | Reason |
 |---|---|---|
-| Main agent | `claude-sonnet-4-6` | Strong reasoning and tool-use |
+| Main agent | routed per turn (`claude-haiku-4-5` / `claude-sonnet-5` / `claude-opus-5`) | Tier matched to the turn's reasoning demand and cost of error — see §12 |
 | Intent classifier | `claude-haiku-4-5` | Fast and cheap for classification tasks |
 | Query rewriter | `claude-haiku-4-5` | Cheap, fast, high-volume structured task |

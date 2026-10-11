@@ -1,5 +1,5 @@
 from src.intent import IntentClassification
-from src.tool_gating import gate_tools, INTENT_TOOL_MAP
+from src.tool_gating import gate_tools, resolve_intents, INTENT_TOOL_MAP
 
 
 def _names(tools):
@@ -57,3 +57,43 @@ def test_off_topic_plus_low_confidence_others_still_yields_no_tools():
         IntentClassification(intent="order_status", confidence=0.2, reasoning="r"),
     ])
     assert result == []
+
+
+def test_resolve_intents_filters_by_confidence():
+    assert resolve_intents([
+        IntentClassification(intent="order_status", confidence=0.9, reasoning="r"),
+        IntentClassification(intent="product_question", confidence=0.2, reasoning="r"),
+    ]) == ["order_status"]
+
+
+def test_resolve_intents_dedupes_repeats():
+    assert resolve_intents([
+        IntentClassification(intent="order_status", confidence=0.9, reasoning="r"),
+        IntentClassification(intent="order_status", confidence=0.7, reasoning="r"),
+    ]) == ["order_status"]
+
+
+def test_resolve_intents_safe_fallback():
+    assert resolve_intents([
+        IntentClassification(
+            intent="general_support", confidence=0.0,
+            reasoning="Safe fallback due to repeated validation failure.",
+        )
+    ]) == ["general_support"]
+
+
+def test_resolve_intents_all_below_threshold_falls_back():
+    assert resolve_intents([
+        IntentClassification(intent="order_status", confidence=0.3, reasoning="r"),
+    ]) == ["general_support"]
+
+
+def test_resolve_intents_off_topic_wins_when_nothing_clears_threshold():
+    assert resolve_intents([
+        IntentClassification(intent="off_topic", confidence=0.4, reasoning="r"),
+        IntentClassification(intent="order_status", confidence=0.3, reasoning="r"),
+    ]) == ["off_topic"]
+
+
+def test_resolve_intents_never_returns_empty():
+    assert resolve_intents([]) == ["general_support"]

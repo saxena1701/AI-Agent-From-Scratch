@@ -6,25 +6,34 @@ _depth = 0
 
 
 class Tracer:
+    def __init__(self):
+        self.enabled = True
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.enabled = enabled
+
     def begin_turn(self, query: str) -> None:
         global _turn_id, _depth
         _turn_id = uuid.uuid4().hex[:6]
         _depth = 0
         self._start = time.time()
-        print(f"\n=== [TURN {_turn_id}] {query!r} ===")
+        if self.enabled:
+            print(f"\n=== [TURN {_turn_id}] {query!r} ===")
 
     def end_turn(self) -> None:
         elapsed_ms = (time.time() - self._start) * 1000
-        print(f"=== [TURN {_turn_id}] done in {elapsed_ms:.0f}ms ===\n")
+        if self.enabled:
+            print(f"=== [TURN {_turn_id}] done in {elapsed_ms:.0f}ms ===\n")
 
     def span(self, kind: str, name: str, **fields):
-        return _Span(kind, name, fields)
+        return _Span(kind, name, fields, self.enabled)
 
 
 class _Span:
-    def __init__(self, kind, name, fields):
+    def __init__(self, kind, name, fields, enabled=True):
         self.kind, self.name, self.fields = kind, name, fields
         self.result = None
+        self.enabled = enabled
 
     def set_result(self, result) -> None:
         self.result = result
@@ -33,9 +42,10 @@ class _Span:
         global _depth
         self.depth = _depth
         _depth += 1
-        indent = "  " * self.depth
-        extra = " ".join(f"{k}={v!r}" for k, v in self.fields.items())
-        print(f"{indent}-> [{self.kind}] {self.name} {extra}".rstrip())
+        if self.enabled:
+            indent = "  " * self.depth
+            extra = " ".join(f"{k}={v!r}" for k, v in self.fields.items())
+            print(f"{indent}-> [{self.kind}] {self.name} {extra}".rstrip())
         self.start = time.time()
         return self
 
@@ -43,6 +53,8 @@ class _Span:
         global _depth
         _depth = self.depth
         elapsed_ms = (time.time() - self.start) * 1000
+        if not self.enabled:
+            return False
         indent = "  " * self.depth
         if exc_val is not None:
             print(f"{indent}x [{self.kind}] {self.name} FAILED ({elapsed_ms:.0f}ms): {exc_val}")
