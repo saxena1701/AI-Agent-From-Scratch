@@ -4,3 +4,7 @@ __pycache__/
 .env
 .txt
 /logs
+# eval: 19MB source corpus and per-run result artifacts
+eval/*.csv
+eval/results*.json
+eval/results*.jsonl
