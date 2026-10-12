@@ -1,6 +1,7 @@
 import json
 
 import anthropic
+from anthropic.types import TextBlock
 import os
 from dotenv import load_dotenv
 from logger import SessionLogger
@@ -16,6 +17,7 @@ from model_router import (
 )
 from backend import MarketSphereBackend
 from tracer import get_tracer
+from output_checks import has_fake_tool_markup, invalid_citations, strip_citations
 load_dotenv()
 
 class Agent:
@@ -34,6 +36,9 @@ class Agent:
         self.model_routed = False   # False until a turn has routed; DEFAULT_MODEL is not a floor
         self.floor_reason = None    # the routing reason that set the current tier
         self.route_counts: dict[str, int] = {}  # counts user turns, not API calls
+        self.retrieved_chunk_ids: set[str] = set()  # every chunk_id retrieve has returned this session
+        self.last_tool_calls = []
+        self.last_output_checks = []  # output-check events from the most recent turn
         with open('src/prompt/system_prompt.md', 'r') as f:
             self.system_prompt = f.read()
 
@@ -109,56 +114,151 @@ class Agent:
     def run_turn(self, user_input: str, backend: MarketSphereBackend, print_debug: bool = True):
         """Run one full user turn: classify/route, stream the model, and loop
         through any tool calls until the turn reaches end_turn (or the tool
-        iteration limit). Returns the final Message; each tool call made along
-        the way is recorded in self.last_tool_calls."""
+        iteration limit), then check the final reply before returning it.
+        Returns the final Message; each tool call made along the way is recorded
+        in self.last_tool_calls, and each failed output check in
+        self.last_output_checks."""
         self.last_tool_calls = []
+        self.last_output_checks = []
         self.tracer.set_enabled(print_debug)
         self.tracer.begin_turn(user_input)
         try:
-            response = self.ask_question(user_input,print_debug=print_debug)
-            iterations = 0
-            while response.stop_reason == "tool_use":
-                if iterations >= MAX_TOOL_ITERATIONS:
-                    # history ends with an unanswered assistant tool_use block;
-                    # answer every block with an error so history stays valid for
-                    # the next user turn, then stop WITHOUT re-calling the model.
-                    self.conversation_history.append({
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": json.dumps({"error": "Tool iteration limit reached."}),
-                                "is_error": True
-                            }
-                            for block in response.content if block.type == "tool_use"
-                        ]
-                    })
-                    
-                    if print_debug:
-                        print(f"\n[!] Stopped after {MAX_TOOL_ITERATIONS} tool iterations.")
-                    break
-                iterations += 1
-
-                for block in response.content:
-                    if block.type == "tool_use":
-                        with self.tracer.span("tool_call", block.name, args=block.input) as span:
-                            result = execute_tool(block.name, block.input, backend)
-                            span.set_result(result)
-                        self.last_tool_calls.append({"name": block.name, "input": block.input, "result": result})
-                        self.conversation_history.append({
-                            "role": "user",
-                            "content": [{
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": json.dumps(result)
-                            }]
-                        })
-
+            response = self.ask_question(user_input, print_debug=print_debug)
+            retries_left = OUTPUT_CHECK_RETRIES
+            while True:
+                response = self._run_tool_loop(response, backend, print_debug)
+                if response.stop_reason == "tool_use":
+                    return response  # iteration limit hit; history already patched
+                problem = self._find_output_problem(response)
+                if problem is None:
+                    return response
+                # The rejected reply is the last history entry; drop it so neither
+                # the customer nor later turns build on it.
+                self.conversation_history.pop()
+                with self.tracer.span("output_check", problem["check"], detail=problem["detail"]) as span:
+                    action = "retry" if retries_left else "fallback"
+                    span.set_result({"action": action})
+                self.last_output_checks.append(
+                    {"check": problem["check"], "detail": problem["detail"], "action": action}
+                )
+                if print_debug:
+                    print(f"\n[Output check] {problem['check']}: {problem['detail']} → {action}")
+                if not retries_left:
+                    return self._fallback_reply(response, problem, print_debug)
+                retries_left -= 1
+                self._append_user_note(problem["nudge"])
                 response = self.ask_question(print_debug=print_debug)
-            return response
         finally:
             self.tracer.end_turn()
+
+    def _run_tool_loop(self, response, backend: MarketSphereBackend, print_debug: bool):
+        """Execute tool_use blocks and re-call the model until the reply stops
+        asking for tools or the iteration limit is reached."""
+        iterations = 0
+        while response.stop_reason == "tool_use":
+            if iterations >= MAX_TOOL_ITERATIONS:
+                # history ends with an unanswered assistant tool_use block;
+                # answer every block with an error so history stays valid for
+                # the next user turn, then stop WITHOUT re-calling the model.
+                self.conversation_history.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps({"error": "Tool iteration limit reached."}),
+                            "is_error": True
+                        }
+                        for block in response.content if block.type == "tool_use"
+                    ]
+                })
+
+                if print_debug:
+                    print(f"\n[!] Stopped after {MAX_TOOL_ITERATIONS} tool iterations.")
+                break
+            iterations += 1
+
+            for block in response.content:
+                if block.type == "tool_use":
+                    with self.tracer.span("tool_call", block.name, args=block.input) as span:
+                        result = execute_tool(block.name, block.input, backend)
+                        span.set_result(result)
+                    self.last_tool_calls.append({"name": block.name, "input": block.input, "result": result})
+                    if block.name == "retrieve" and isinstance(result, dict):
+                        self.retrieved_chunk_ids.update(
+                            r["chunk_id"] for r in result.get("results", []) if "chunk_id" in r
+                        )
+                    self.conversation_history.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(result)
+                        }]
+                    })
+
+            response = self.ask_question(print_debug=print_debug)
+        return response
+
+    def _find_output_problem(self, response):
+        """Return the first failed output check on a final reply, or None if it passes."""
+        text = "".join(b.text for b in response.content if b.type == "text")
+        if has_fake_tool_markup(text):
+            return {
+                "check": "fake_tool_markup",
+                "detail": "reply wrote a tool call as plain text",
+                "nudge": (
+                    "Your last reply wrote a tool call out as text. That did not run "
+                    "anything, and the customer cannot be shown it. If you need a tool "
+                    "you have this turn, call it through the tool interface. If you "
+                    "don't have the tool you need, tell the customer you can't check "
+                    "that right now. Don't claim to have looked anything up."
+                ),
+            }
+        bad = invalid_citations(text, self.retrieved_chunk_ids)
+        if bad:
+            valid = ", ".join(sorted(self.retrieved_chunk_ids)) or "none"
+            return {
+                "check": "invalid_citations",
+                "detail": f"cited IDs not in any retrieve result: {bad}",
+                "bad_ids": bad,
+                "nudge": (
+                    f"Your last reply cited {bad}, which are not chunk_ids from any "
+                    "knowledge-base result in this conversation. Rewrite the reply citing "
+                    "only chunk_ids that appear in those results, copied exactly, or "
+                    f"without citations if none apply. Valid chunk_ids: {valid}."
+                ),
+            }
+        return None
+
+    def _append_user_note(self, note: str):
+        """Add a correction for the model to the current user turn. It is merged
+        into the last user message (the question or tool results) rather than
+        sent as a second consecutive user message."""
+        last = self.conversation_history[-1]
+        block = {"type": "text", "text": f"[Note from the support system, not the customer] {note}"}
+        if isinstance(last["content"], str):
+            last["content"] = [{"type": "text", "text": last["content"]}, block]
+        else:
+            last["content"] = [*last["content"], block]
+
+    def _fallback_reply(self, response, problem, print_debug: bool):
+        """Replace a reply that failed its check after the retry. Invalid citations
+        are stripped and the rest of the reply kept; a fake tool call can't be
+        salvaged, so it becomes a safe message that claims nothing."""
+        if problem["check"] == "invalid_citations":
+            content = [
+                TextBlock(type="text", text=strip_citations(b.text, problem["bad_ids"]))
+                if b.type == "text" else b
+                for b in response.content
+            ]
+        else:
+            content = [TextBlock(type="text", text=FAKE_TOOL_FALLBACK)]
+        reply = response.model_copy(update={"content": content})
+        self.conversation_history.append({"role": "assistant", "content": reply.content})
+        if print_debug:
+            print("".join(b.text for b in reply.content if b.type == "text"))
+        return reply
 
     def routing_summary(self) -> str:
         """Per-model turn counts, the session's final tier, and the estimated cost effect.
@@ -182,6 +282,11 @@ class Agent:
 
 
 MAX_TOOL_ITERATIONS = 10
+OUTPUT_CHECK_RETRIES = 1  # re-ask the model once before falling back
+FAKE_TOOL_FALLBACK = (
+    "I'm sorry, I wasn't able to look that up just now. Could you try again, or tell "
+    "me a bit more about what you're looking for?"
+)
 
 if __name__ == "__main__":
     agent = Agent()

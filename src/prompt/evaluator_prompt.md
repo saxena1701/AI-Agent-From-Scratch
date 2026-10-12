@@ -62,13 +62,15 @@ service intuition:
 - On a "not found" result, states the order/product couldn't be found — never speculates about
   whether the ID is simply wrong vs. belongs to someone else (this is a deliberate ambiguity in
   `backend.py` and must stay ambiguous to the customer).
-- Cites `retrieve` results inline as `[ch_XXXX]` when the answer draws on retrieved knowledge.
+- Cites `retrieve` results inline using the result's exact `chunk_id` in square brackets (e.g.
+  `[return_policy_c0]`) when the answer draws on retrieved knowledge.
 - Explicitly admits uncertainty ("I wasn't able to find a clear answer...") rather than guessing
   when retrieval returns nothing relevant, or when no tool/KB document actually covers the
   question (see cases with `ground_truth: null` and a "no tool AND no KB coverage" note) — the
   correct move there is a plain acknowledgment and escalation, not a fabricated fix.
 - Offers an alternative when an item is out of stock, ineligible for return, or not cancellable,
-  per the tool's guidance in `system_prompt.md` — doesn't just state the negative and stop.
+  per the tool's own guidance (its description in `src/tools.py`) — doesn't just state the
+  negative and stop.
 - Maintains a courteous, professional tone regardless of how the customer phrased the request
   (typos, profanity, frustration).
 - For `off_topic` cases: declines/redirects without engaging the off-topic request, including
@@ -76,8 +78,8 @@ service intuition:
   message.
 
 ### 4. Citation correctness (RAG cases only; `null` if no `retrieve` call was made or expected)
-- Every claim sourced from a retrieved chunk carries a `[ch_XXXX]` citation immediately after the
-  sentence it supports.
+- Every claim sourced from a retrieved chunk carries a citation of that chunk's exact `chunk_id`
+  in square brackets (e.g. `[return_policy_c0]`) immediately after the sentence it supports.
 - Citations are not attached to facts the tools/retrieval didn't actually provide.
 - No citation is invented (a chunk ID must correspond to something actually in `agent_response`'s
   tool results).

@@ -8,11 +8,14 @@ from tools import (
 CONFIDENCE_THRESHOLD = 0.5
 
 INTENT_TOOL_MAP = {
-    "order_status": [LOOKUP_ORDER_TOOL, LIST_CUSTOMER_ORDERS_TOOL],
+    # retrieve is included for order_status and return_request so policy/how-to
+    # questions in those buckets ("how do I track my order?", "how long do
+    # refunds take?") can still be answered from the knowledge base.
+    "order_status": [LOOKUP_ORDER_TOOL, LIST_CUSTOMER_ORDERS_TOOL, RETRIEVE_TOOL],
     "product_question": [LOOKUP_PRODUCT_TOOL, SEARCH_PRODUCTS_TOOL, RETRIEVE_TOOL],
     "return_request": [
         LOOKUP_ORDER_TOOL, LIST_CUSTOMER_ORDERS_TOOL, CHECK_RETURN_ELIGIBILITY_TOOL,
-        INITIATE_RETURN_TOOL, CANCEL_ORDER_TOOL,
+        INITIATE_RETURN_TOOL, CANCEL_ORDER_TOOL, RETRIEVE_TOOL,
     ],
     "general_support": [
         GET_USER_DETAILS_TOOL, LOOKUP_ORDER_TOOL, LIST_CUSTOMER_ORDERS_TOOL, RETRIEVE_TOOL,

@@ -63,7 +63,7 @@ Conversation state is persisted across turns within a session. The full message 
 ### 3. System Prompts & Prompt Versioning
 The agent's behaviour is defined by a system prompt loaded from `src/prompt/system_prompt.md`. Storing prompts as versioned files in a dedicated directory treats them with the same discipline as code — changes are tracked, reviewable, and reversible.
 
-The main agent is scoped as an e-commerce support assistant with tool-use guidance baked into the prompt. A separate prompt file drives the intent classifier.
+The main agent is scoped as an e-commerce support assistant. Per-tool usage guidance lives in each tool's description in `src/tools.py` rather than in the system prompt, so when tool gating removes a tool for a turn, its instructions go with it and the model is never told about a tool it can't call. The system prompt keeps only tool-agnostic rules. A separate prompt file drives the intent classifier.
 
 ### 4. Response Streaming
 Agent responses are streamed token-by-token using `client.messages.stream`, printing output as it arrives rather than waiting for the full response. This significantly reduces perceived latency. After streaming completes, `stream.get_final_message()` retrieves the full message object including usage stats.
@@ -132,7 +132,7 @@ When the agent calls `retrieve`, `tool_executor.py`:
 2. Prints the retrieved chunks to the terminal with their chunk IDs before the agent responds
 3. Returns the chunks as a `tool_result` so the agent can cite them inline
 
-The system prompt instructs the agent to cite retrieved chunks inline as `[ch_XXXX]` after each supported sentence, and to explicitly acknowledge when retrieval doesn't contain a clear answer rather than guessing. This eliminates confabulation on policy and documentation questions.
+The system prompt instructs the agent to cite retrieved chunks inline by their exact `chunk_id` (e.g. `[return_policy_c0]`) after each supported sentence, and to explicitly acknowledge when retrieval doesn't contain a clear answer rather than guessing. This eliminates confabulation on policy and documentation questions.
 
 ### 10. Query Rewriter (Multi-Query Fan-Out)
 
